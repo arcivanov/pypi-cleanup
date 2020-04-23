@@ -73,6 +73,7 @@ docs/_build/
 
 # PyBuilder
 target/
+.pybuilder/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -127,3 +128,6 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Idea
+.idea
