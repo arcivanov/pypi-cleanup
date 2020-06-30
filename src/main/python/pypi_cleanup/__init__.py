@@ -78,7 +78,7 @@ class PypiCleanup:
         logging.info(f"Will use the following patterns {self.patterns} on package {self.package}")
 
         with requests.Session() as s:
-            with s.get(f"https://pypi.python.org/pypi/{self.package}/json") as r:
+            with s.get(f"{self.url}/pypi/{self.package}/json") as r:
                 try:
                     r.raise_for_status()
                 except RequestException as e:
