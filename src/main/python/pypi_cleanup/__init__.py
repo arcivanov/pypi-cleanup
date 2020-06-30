@@ -171,7 +171,7 @@ class PypiCleanup:
 
                     with s.post(f"{self.url}/manage/project/{self.package}/release/{pkg_ver}/",
                                 data={"csrf_token": csrf,
-                                      "confirm_version": pkg_ver,
+                                      "confirm_delete_version": pkg_ver,
                                       },
                                 headers={"referer": referer}) as r:
                         r.raise_for_status()
