@@ -78,7 +78,7 @@ class PypiCleanup:
         logging.info(f"Will use the following patterns {self.patterns} on package {self.package}")
 
         with requests.Session() as s:
-            with s.get(f"https://pypi.python.org/pypi/{self.package}/json") as r:
+            with s.get(f"{self.url}/pypi/{self.package}/json") as r:
                 try:
                     r.raise_for_status()
                 except RequestException as e:
@@ -171,7 +171,7 @@ class PypiCleanup:
 
                     with s.post(f"{self.url}/manage/project/{self.package}/release/{pkg_ver}/",
                                 data={"csrf_token": csrf,
-                                      "confirm_version": pkg_ver,
+                                      "confirm_delete_version": pkg_ver,
                                       },
                                 headers={"referer": referer}) as r:
                         r.raise_for_status()
