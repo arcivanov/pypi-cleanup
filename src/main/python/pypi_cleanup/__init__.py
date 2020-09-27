@@ -30,11 +30,14 @@ DEFAULT_PATTERNS = [re.compile(r".*\.dev\d+$")]
 
 
 class CsfrParser(HTMLParser):
-    def __init__(self, target):
+    def __init__(self, target, contains_input=None):
         super().__init__()
         self._target = target
-        self.csrf = None
-        self._in_form = False
+        self._contains_input = contains_input
+        self.csrf = None  # Result value from all forms on page
+        self._csrf = None  # Temp value from current form
+        self._in_form = False  # Currently parsing a form with an action we're interested in
+        self._input_contained = False  # Input field requested is contained in the current form
 
     def handle_starttag(self, tag, attrs):
         if tag == "form":
@@ -46,12 +49,19 @@ class CsfrParser(HTMLParser):
         if self._in_form and tag == "input":
             attrs = dict(attrs)
             if attrs.get("name") == "csrf_token":
-                self.csrf = attrs["value"]
+                self._csrf = attrs["value"]
+
+            if self._contains_input and attrs.get("name") == self._contains_input:
+                self._input_contained = True
+
             return
 
     def handle_endtag(self, tag):
         if tag == "form":
             self._in_form = False
+            # If we're in a right form that contains the requested input and csrf is not set
+            if (not self._contains_input or self._input_contained) and not self.csrf:
+                self.csrf = self._csrf
             return
 
 
@@ -159,17 +169,18 @@ class PypiCleanup:
             for pkg_ver in pkg_vers:
                 logging.info(f"Deleting {self.package} version {pkg_ver}")
                 if not self.dry_run:
-                    with s.get(f"{self.url}/manage/project/{self.package}/releases/") as r:
+                    form_action = f"/manage/project/{self.package}/release/{pkg_ver}/"
+                    form_url = f"{self.url}{form_action}"
+                    with s.get(form_url) as r:
                         r.raise_for_status()
-                        form_action = f"/manage/project/{self.package}/release/{pkg_ver}/"
-                        parser = CsfrParser(form_action)
+                        parser = CsfrParser(form_action, "confirm_delete_version")
                         parser.feed(r.text)
                         if not parser.csrf:
                             raise ValueError(f"No CSFR found in {form_action}")
                         csrf = parser.csrf
                         referer = r.url
 
-                    with s.post(f"{self.url}/manage/project/{self.package}/release/{pkg_ver}/",
+                    with s.post(form_url,
                                 data={"csrf_token": csrf,
                                       "confirm_delete_version": pkg_ver,
                                       },
