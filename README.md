@@ -28,6 +28,9 @@ or FITNESS FOR A PARTICULAR PURPOSE.
 
 The default package release version selection pattern is `r".*dev\d+$"`.
 
+Authentication password may be passed via environment variable
+`PYPI_CLEANUP_PASSWORD`. Otherwise, you will be prompted to enter it.
+
 Authentication with TOTP is supported.
 
 Examples:

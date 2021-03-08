@@ -17,6 +17,7 @@
 import argparse
 import getpass
 import logging
+import os
 import re
 import sys
 from html.parser import HTMLParser
@@ -123,7 +124,9 @@ class PypiCleanup:
                 if not self.dry_run:
                     return 3
 
-            password = getpass.getpass("Password: ")
+            password = os.getenv("PYPI_CLEANUP_PASSWORD")
+            if password is None:
+                password = getpass.getpass("Password: ")
 
             with s.get(f"{self.url}/account/login/") as r:
                 r.raise_for_status()
