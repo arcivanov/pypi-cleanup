@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import sys
+import time
 from html.parser import HTMLParser
 from textwrap import dedent
 from urllib.parse import urlparse
@@ -67,12 +68,12 @@ class CsfrParser(HTMLParser):
 
 
 class PypiCleanup:
-    def __init__(self, url, username, package, dry_run, patterns, verbose, **_):
+    def __init__(self, url, username, package, do_it, patterns, verbose, **_):
         self.url = urlparse(url).geturl()
         if self.url[-1] == "/":
             self.url = self.url[:-1]
         self.username = username
-        self.dry_run = dry_run
+        self.do_it = do_it
         self.package = package
         self.patterns = patterns or DEFAULT_PATTERNS
         self.verbose = verbose
@@ -83,8 +84,12 @@ class PypiCleanup:
         if self.verbose:
             logging.root.setLevel(logging.DEBUG)
 
-        if self.dry_run:
-            logging.warning("RUNNING IN DRY-RUN MODE")
+        if self.do_it:
+            logging.warning("!!! WILL ACTUALLY DELETE THINGS !!!")
+            logging.warning("Will sleep for 3 seconds - Ctrl-C to abort!")
+            time.sleep(3.0)
+        else:
+            logging.info("Running in DRY RUN mode")
 
         logging.info(f"Will use the following patterns {self.patterns} on package {self.package}")
 
@@ -121,7 +126,7 @@ class PypiCleanup:
                 \tGoodbye.
                 """), file=sys.stderr)
 
-                if not self.dry_run:
+                if not self.do_it:
                     return 3
 
             password = os.getenv("PYPI_CLEANUP_PASSWORD")
@@ -170,8 +175,8 @@ class PypiCleanup:
                         return 1
 
             for pkg_ver in pkg_vers:
-                logging.info(f"Deleting {self.package} version {pkg_ver}")
-                if not self.dry_run:
+                if self.do_it:
+                    logging.info(f"Deleting {self.package} version {pkg_ver}")
                     form_action = f"/manage/project/{self.package}/release/{pkg_ver}/"
                     form_url = f"{self.url}{form_action}"
                     with s.get(form_url) as r:
@@ -191,6 +196,8 @@ class PypiCleanup:
                         r.raise_for_status()
 
                     logging.info(f"Deleted {self.package} version {pkg_ver}")
+                else:
+                    logging.info(f"Would be deleting {self.package} version {pkg_ver}, but not doing it!")
 
 
 def main():
@@ -203,9 +210,9 @@ def main():
     parser.add_argument("-t", "--host", default="https://pypi.org/", dest="url", help="PyPI <proto>://<host> prefix")
     parser.add_argument("-r", "--version-regex", type=re.compile, action="append",
                         dest="patterns", help="regex to use to match package versions to be deleted")
-    parser.add_argument("-n", "--dry-run", action="store_true", default=False, help="do not actually delete anything")
+    parser.add_argument("--do-it", action="store_true", default=False, help="actually perform the destructive delete")
     parser.add_argument("-y", "--yes", action="store_true", default=False, dest="confirm",
-                        help="confirm dangerous action")
+                        help="confirm extremely dangerous destructive delete")
     parser.add_argument("-v", "--verbose", action="store_const", const=1, default=0, help="be verbose")
 
     args = parser.parse_args()
@@ -214,7 +221,7 @@ def main():
         WARNING:
         \tYou're using custom patterns: {args.patterns}.
         \tIf you make a mistake in your patterns you can potentially wipe critical versions irrecoverably.
-        \tMake sure to `-n`/`--dry-run` your patterns before running the destructive cleanup.
+        \tMake sure to test your patterns before running the destructive cleanup.
         \tOnce you're satisfied the patterns are correct re-run with `-y`/`--yes` to confirm you know what you're doing.
         \tGoodbye.
         \t"""))
