@@ -210,13 +210,13 @@ def main():
     parser.add_argument("-t", "--host", default="https://pypi.org/", dest="url", help="PyPI <proto>://<host> prefix")
     parser.add_argument("-r", "--version-regex", type=re.compile, action="append",
                         dest="patterns", help="regex to use to match package versions to be deleted")
-    parser.add_argument("--do-it", action="store_true", default=False, help="actually perform the destructive delete")
+    parser.add_argument("--do-it", action="store_true", default=False, dest="do_it", help="actually perform the destructive delete")
     parser.add_argument("-y", "--yes", action="store_true", default=False, dest="confirm",
                         help="confirm extremely dangerous destructive delete")
     parser.add_argument("-v", "--verbose", action="store_const", const=1, default=0, help="be verbose")
 
     args = parser.parse_args()
-    if args.patterns and not args.confirm and not args.dry_run:
+    if args.patterns and not args.confirm and not args.do_it:
         logging.warning(dedent(f"""
         WARNING:
         \tYou're using custom patterns: {args.patterns}.
