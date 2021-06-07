@@ -216,7 +216,7 @@ def main():
     parser.add_argument("-v", "--verbose", action="store_const", const=1, default=0, help="be verbose")
 
     args = parser.parse_args()
-    if args.patterns and not args.confirm and not args.dry_run:
+    if args.patterns and not args.confirm and not args.do_it:
         logging.warning(dedent(f"""
         WARNING:
         \tYou're using custom patterns: {args.patterns}.
