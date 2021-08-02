@@ -37,7 +37,7 @@ Examples:
 
 ```bash
 $ pypi-cleanup --help
-usage: pypi-cleanup [-h] -u USERNAME -p PACKAGE [-t URL] [-r PATTERNS] [-n] [-y] [-v]
+usage: pypi-cleanup [-h] -u USERNAME -p PACKAGE [-t URL] [-r PATTERNS] [--do-it] [-y] [-v]
 
 PyPi Package Cleanup Utility
 
@@ -50,8 +50,8 @@ optional arguments:
   -t URL, --host URL    PyPI <proto>://<host> prefix (default: https://pypi.org/)
   -r PATTERNS, --version-regex PATTERNS
                         regex to use to match package versions to be deleted (default: None)
-  -n, --dry-run         do not actually delete anything (default: False)
-  -y, --yes             confirm dangerous action (default: False)
+  --do-it               actually perform the destructive delete (default: False)
+  -y, --yes             confirm extremely dangerous destructive delete (default: False)
   -v, --verbose         be verbose (default: 0)
 ```
 
