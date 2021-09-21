@@ -44,7 +44,8 @@ class CsfrParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         if tag == "form":
             attrs = dict(attrs)
-            if attrs["action"] == self._target or attrs["action"].startswith(self._target):
+            action = attrs.get("action")  # Might be None.
+            if action and (action == self._target or action.startswith(self._target)):
                 self._in_form = True
             return
 
