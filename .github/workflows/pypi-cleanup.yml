@@ -38,7 +38,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           pyb-extra-args: ${{ env.PYB_EXTRA_ARGS }}
-          pyb-version: ">0.13.0.dev0"
+          pyb-version: "\\>=0.13.0.dev0"
   build-stable-summary:
     if: success() || failure()
     runs-on: ubuntu-latest
