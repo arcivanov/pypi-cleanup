@@ -20,7 +20,6 @@ jobs:
           - '3.7'
           - '3.6'
     env:
-      DEPLOY_BRANCHES: "refs/heads/master"
       DEPLOY_PYTHONS: "3.9"
       DEPLOY_OSES: "Linux"
       TWINE_USERNAME: __token__
@@ -29,16 +28,15 @@ jobs:
     steps:
       - shell: bash
         if: |
+          github.event_name == 'push' &&
           contains(env.DEPLOY_OSES, runner.os) &&
-          contains(env.DEPLOY_PYTHONS, matrix.python-version) &&
-          contains(env.DEPLOY_BRANCHES, github.ref)
+          contains(env.DEPLOY_PYTHONS, matrix.python-version)
         run: |
-          echo "PYB_EXTRA_ARGS=upload" >> $GITHUB_ENV
+          echo "PYB_EXTRA_ARGS=+upload" >> $GITHUB_ENV
       - uses: pybuilder/build@master
         with:
           python-version: ${{ matrix.python-version }}
           pyb-extra-args: ${{ env.PYB_EXTRA_ARGS }}
-          pyb-version: ">=0.13.0.dev0"
   build-stable-summary:
     if: success() || failure()
     runs-on: ubuntu-latest
