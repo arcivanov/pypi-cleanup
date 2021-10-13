@@ -224,9 +224,7 @@ def main():
         \tIf you make a mistake in your patterns you can potentially wipe critical versions irrecoverably.
         \tMake sure to test your patterns before running the destructive cleanup.
         \tOnce you're satisfied the patterns are correct re-run with `-y`/`--yes` to confirm you know what you're doing.
-        \tGoodbye.
         \t"""))
-        return 3
 
     return PypiCleanup(**vars(args)).run()
 
