@@ -15,6 +15,7 @@
 #
 
 import argparse
+import configparser
 import datetime
 import getpass
 import logging
@@ -135,6 +136,26 @@ class PypiCleanup:
                     return 3
 
             password = os.getenv("PYPI_CLEANUP_PASSWORD")
+
+            if self.username is None:
+                realpath = os.path.realpath(os.path.expanduser("~/.pypirc"))
+                parser = configparser.RawConfigParser()
+                try:
+                    with open(realpath) as f:
+                        parser.read_file(f)
+                        logging.info(f"Using configuration from {realpath}")
+                except FileNotFoundError:
+                    logging.error(f"Could not find configuration file {realpath} and no username was set")
+                    return 1
+                repo = None
+                if self.url == "https://pypi.org":
+                    repo = "pypi"
+                if self.url == "https://test.pypi.org":
+                    repo = "testpypi"
+                if repo:
+                    self.username = parser.get(repo, "username", fallback=None)
+                    password = parser.get(repo, "password", fallback=None)
+
             if password is None:
                 password = getpass.getpass("Password: ")
 
@@ -210,7 +231,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="PyPi Package Cleanup Utility",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("-u", "--username", required=True, help="authentication username")
+    parser.add_argument("-u", "--username", help="authentication username")
     parser.add_argument("-p", "--package", required=True, help="PyPI package name")
     parser.add_argument("-t", "--host", default="https://pypi.org/", dest="url", help="PyPI <proto>://<host> prefix")
     parser.add_argument("-r", "--version-regex", type=re.compile, action="append",
