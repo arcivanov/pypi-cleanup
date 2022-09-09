@@ -15,6 +15,7 @@
 #
 
 import argparse
+import datetime
 import getpass
 import logging
 import os
@@ -69,7 +70,7 @@ class CsfrParser(HTMLParser):
 
 
 class PypiCleanup:
-    def __init__(self, url, username, package, do_it, patterns, verbose, **_):
+    def __init__(self, url, username, package, do_it, patterns, verbose, days, **_):
         self.url = urlparse(url).geturl()
         if self.url[-1] == "/":
             self.url = self.url[:-1]
@@ -78,6 +79,7 @@ class PypiCleanup:
         self.package = package
         self.patterns = patterns or DEFAULT_PATTERNS
         self.verbose = verbose
+        self.date = datetime.datetime.now() - datetime.timedelta(days=days)
 
     def run(self):
         csrf = None
@@ -102,25 +104,27 @@ class PypiCleanup:
                     logging.error(f"Unable to find package {repr(self.package)}", exc_info=e)
                     return 1
 
-                keys = list(r.json()["releases"].keys())
+                release_date = {}
+                for release, files in r.json()["releases"].items():
+                    release_date[release] = max([datetime.datetime.strptime(f["upload_time"], '%Y-%m-%dT%H:%M:%S') for f in files])
 
-            if not keys:
+            if not release_date:
                 logging.info(f"No releases for package {self.package} have been found")
                 return
 
             pkg_vers = list(filter(lambda k:
                                    any(filter(lambda rex: rex.match(k),
-                                              self.patterns)),
-                                   keys))
+                                              self.patterns)) and release_date[k] < self.date,
+                                   release_date.keys()))
 
             if not pkg_vers:
-                logging.info(f"No packages were found matching specified patterns in package {self.package}")
+                logging.info(f"No releases were found matching specified patterns and dates in package {self.package}")
                 return
 
-            if set(pkg_vers) == set(keys):
+            if set(pkg_vers) == set(release_date.keys()):
                 print(dedent(f"""
                 WARNING:
-                \tYour have selected the following patterns: {self.patterns}
+                \tYou have selected the following patterns: {self.patterns}
                 \tThese patterns would delete all available released versions of `{self.package}`.
                 \tThis will render your project/package permanently inaccessible.
                 \tSince the costs of an error are too high I'm refusing to do this.
@@ -214,6 +218,8 @@ def main():
     parser.add_argument("--do-it", action="store_true", default=False, help="actually perform the destructive delete")
     parser.add_argument("-y", "--yes", action="store_true", default=False, dest="confirm",
                         help="confirm extremely dangerous destructive delete")
+    parser.add_argument("-d", "--days", type=int, default=0,
+                        help="only delete releases where all files are older than X days")
     parser.add_argument("-v", "--verbose", action="store_const", const=1, default=0, help="be verbose")
 
     args = parser.parse_args()
