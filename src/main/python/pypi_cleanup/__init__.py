@@ -71,20 +71,18 @@ class CsfrParser(HTMLParser):
 
 
 class PypiCleanup:
-    def __init__(self, url, username, package, do_it, patterns, verbose, days, **_):
+    def __init__(self, url, username, packages, do_it, patterns, verbose, days, **_):
         self.url = urlparse(url).geturl()
         if self.url[-1] == "/":
             self.url = self.url[:-1]
         self.username = username
         self.do_it = do_it
-        self.package = package
+        self.packages = packages
         self.patterns = patterns or DEFAULT_PATTERNS
         self.verbose = verbose
         self.date = datetime.datetime.now() - datetime.timedelta(days=days)
 
     def run(self):
-        csrf = None
-
         if self.verbose:
             logging.root.setLevel(logging.DEBUG)
 
@@ -95,14 +93,45 @@ class PypiCleanup:
         else:
             logging.info("Running in DRY RUN mode")
 
-        logging.info(f"Will use the following patterns {self.patterns} on package {self.package}")
+        password = os.getenv("PYPI_CLEANUP_PASSWORD")
 
+        if self.username is None:
+            realpath = os.path.realpath(os.path.expanduser("~/.pypirc"))
+            parser = configparser.RawConfigParser()
+            try:
+                with open(realpath) as f:
+                    parser.read_file(f)
+                    logging.info(f"Using configuration from {realpath}")
+            except FileNotFoundError:
+                logging.error(f"Could not find configuration file {realpath} and no username was set")
+                return 1
+            repo = None
+            if self.url == "https://pypi.org":
+                repo = "pypi"
+            if self.url == "https://test.pypi.org":
+                repo = "testpypi"
+            if repo:
+                self.username = parser.get(repo, "username", fallback=None)
+                password = parser.get(repo, "password", fallback=None)
+
+        if password is None:
+            password = getpass.getpass("Password: ")
+
+        for p in self.packages:
+            result = self.cleanup(p, password)
+            if result:
+                return result
+
+
+    def cleanup(self, package, password):
+        logging.info(f"Will use the following patterns {self.patterns} on package {package}")
+        csrf = None
         with requests.Session() as s:
-            with s.get(f"{self.url}/pypi/{self.package}/json") as r:
+            with s.get(f"{self.url}/pypi/{package}/json") as r:
                 try:
                     r.raise_for_status()
                 except RequestException as e:
-                    logging.error(f"Unable to find package {repr(self.package)}", exc_info=e)
+                    logging.error(f"Unable to find package {repr(package)}", exc_info=e)
                     return 1
 
                 release_date = {}
@@ -110,7 +139,7 @@ class PypiCleanup:
                     release_date[release] = max([datetime.datetime.strptime(f["upload_time"], '%Y-%m-%dT%H:%M:%S') for f in files])
 
             if not release_date:
-                logging.info(f"No releases for package {self.package} have been found")
+                logging.info(f"No releases for package {package} have been found")
                 return
 
             pkg_vers = list(filter(lambda k:
@@ -119,14 +148,14 @@ class PypiCleanup:
                                    release_date.keys()))
 
             if not pkg_vers:
-                logging.info(f"No releases were found matching specified patterns and dates in package {self.package}")
+                logging.info(f"No releases were found matching specified patterns and dates in package {package}")
                 return
 
             if set(pkg_vers) == set(release_date.keys()):
                 print(dedent(f"""
                 WARNING:
                 \tYou have selected the following patterns: {self.patterns}
-                \tThese patterns would delete all available released versions of `{self.package}`.
+                \tThese patterns would delete all available released versions of `{package}`.
                 \tThis will render your project/package permanently inaccessible.
                 \tSince the costs of an error are too high I'm refusing to do this.
                 \tGoodbye.
@@ -134,30 +163,6 @@ class PypiCleanup:
 
                 if not self.do_it:
                     return 3
-
-            password = os.getenv("PYPI_CLEANUP_PASSWORD")
-
-            if self.username is None:
-                realpath = os.path.realpath(os.path.expanduser("~/.pypirc"))
-                parser = configparser.RawConfigParser()
-                try:
-                    with open(realpath) as f:
-                        parser.read_file(f)
-                        logging.info(f"Using configuration from {realpath}")
-                except FileNotFoundError:
-                    logging.error(f"Could not find configuration file {realpath} and no username was set")
-                    return 1
-                repo = None
-                if self.url == "https://pypi.org":
-                    repo = "pypi"
-                if self.url == "https://test.pypi.org":
-                    repo = "testpypi"
-                if repo:
-                    self.username = parser.get(repo, "username", fallback=None)
-                    password = parser.get(repo, "password", fallback=None)
-
-            if password is None:
-                password = getpass.getpass("Password: ")
 
             with s.get(f"{self.url}/account/login/") as r:
                 r.raise_for_status()
@@ -202,8 +207,8 @@ class PypiCleanup:
 
             for pkg_ver in pkg_vers:
                 if self.do_it:
-                    logging.info(f"Deleting {self.package} version {pkg_ver}")
-                    form_action = f"/manage/project/{self.package}/release/{pkg_ver}/"
+                    logging.info(f"Deleting {package} version {pkg_ver}")
+                    form_action = f"/manage/project/{package}/release/{pkg_ver}/"
                     form_url = f"{self.url}{form_action}"
                     with s.get(form_url) as r:
                         r.raise_for_status()
@@ -221,9 +226,9 @@ class PypiCleanup:
                                 headers={"referer": referer}) as r:
                         r.raise_for_status()
 
-                    logging.info(f"Deleted {self.package} version {pkg_ver}")
+                    logging.info(f"Deleted {package} version {pkg_ver}")
                 else:
-                    logging.info(f"Would be deleting {self.package} version {pkg_ver}, but not doing it!")
+                    logging.info(f"Would be deleting {package} version {pkg_ver}, but not doing it!")
 
 
 def main():
@@ -232,7 +237,7 @@ def main():
     parser = argparse.ArgumentParser(description="PyPi Package Cleanup Utility",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("-u", "--username", help="authentication username")
-    parser.add_argument("-p", "--package", required=True, help="PyPI package name")
+    parser.add_argument("-p", "--packages", "--package", nargs='+', help="PyPI package name(s)")
     parser.add_argument("-t", "--host", default="https://pypi.org/", dest="url", help="PyPI <proto>://<host> prefix")
     parser.add_argument("-r", "--version-regex", type=re.compile, action="append",
                         dest="patterns", help="regex to use to match package versions to be deleted")
