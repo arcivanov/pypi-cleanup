@@ -134,24 +134,25 @@ class PypiCleanup:
                     logging.error(f"Unable to find package {repr(package)}", exc_info=e)
                     return 1
 
-                release_date = {}
+                releases_by_date = {}
                 for release, files in r.json()["releases"].items():
-                    release_date[release] = max([datetime.datetime.strptime(f["upload_time"], '%Y-%m-%dT%H:%M:%S') for f in files])
+                    releases_by_date[release] = max([datetime.datetime.strptime(f["upload_time"],
+                                                                                '%Y-%m-%dT%H:%M:%S') for f in files])
 
-            if not release_date:
+            if not releases_by_date:
                 logging.info(f"No releases for package {package} have been found")
                 return
 
             pkg_vers = list(filter(lambda k:
                                    any(filter(lambda rex: rex.match(k),
-                                              self.patterns)) and release_date[k] < self.date,
-                                   release_date.keys()))
+                                              self.patterns)) and releases_by_date[k] < self.date,
+                                   releases_by_date.keys()))
 
             if not pkg_vers:
                 logging.info(f"No releases were found matching specified patterns and dates in package {package}")
                 return
 
-            if set(pkg_vers) == set(release_date.keys()):
+            if set(pkg_vers) == set(releases_by_date.keys()):
                 print(dedent(f"""
                 WARNING:
                 \tYou have selected the following patterns: {self.patterns}
