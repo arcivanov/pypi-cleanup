@@ -15,6 +15,8 @@
 #
 
 import argparse
+import configparser
+import datetime
 import getpass
 import logging
 import os
@@ -69,7 +71,7 @@ class CsfrParser(HTMLParser):
 
 
 class PypiCleanup:
-    def __init__(self, url, username, package, do_it, patterns, verbose, **_):
+    def __init__(self, url, username, package, do_it, patterns, verbose, days, **_):
         self.url = urlparse(url).geturl()
         if self.url[-1] == "/":
             self.url = self.url[:-1]
@@ -78,6 +80,7 @@ class PypiCleanup:
         self.package = package
         self.patterns = patterns or DEFAULT_PATTERNS
         self.verbose = verbose
+        self.date = datetime.datetime.now() - datetime.timedelta(days=days)
 
     def run(self):
         csrf = None
@@ -102,25 +105,28 @@ class PypiCleanup:
                     logging.error(f"Unable to find package {repr(self.package)}", exc_info=e)
                     return 1
 
-                keys = list(r.json()["releases"].keys())
+                releases_by_date = {}
+                for release, files in r.json()["releases"].items():
+                    releases_by_date[release] = max([datetime.datetime.strptime(f["upload_time"],
+                                                                                '%Y-%m-%dT%H:%M:%S') for f in files])
 
-            if not keys:
+            if not releases_by_date:
                 logging.info(f"No releases for package {self.package} have been found")
                 return
 
             pkg_vers = list(filter(lambda k:
                                    any(filter(lambda rex: rex.match(k),
-                                              self.patterns)),
-                                   keys))
+                                              self.patterns)) and releases_by_date[k] < self.date,
+                                   releases_by_date.keys()))
 
             if not pkg_vers:
-                logging.info(f"No packages were found matching specified patterns in package {self.package}")
+                logging.info(f"No releases were found matching specified patterns and dates in package {self.package}")
                 return
 
-            if set(pkg_vers) == set(keys):
+            if set(pkg_vers) == set(releases_by_date.keys()):
                 print(dedent(f"""
                 WARNING:
-                \tYour have selected the following patterns: {self.patterns}
+                \tYou have selected the following patterns: {self.patterns}
                 \tThese patterns would delete all available released versions of `{self.package}`.
                 \tThis will render your project/package permanently inaccessible.
                 \tSince the costs of an error are too high I'm refusing to do this.
@@ -131,6 +137,26 @@ class PypiCleanup:
                     return 3
 
             password = os.getenv("PYPI_CLEANUP_PASSWORD")
+
+            if self.username is None:
+                realpath = os.path.realpath(os.path.expanduser("~/.pypirc"))
+                parser = configparser.RawConfigParser()
+                try:
+                    with open(realpath) as f:
+                        parser.read_file(f)
+                        logging.info(f"Using configuration from {realpath}")
+                except FileNotFoundError:
+                    logging.error(f"Could not find configuration file {realpath} and no username was set")
+                    return 1
+                repo = None
+                if self.url == "https://pypi.org":
+                    repo = "pypi"
+                if self.url == "https://test.pypi.org":
+                    repo = "testpypi"
+                if repo:
+                    self.username = parser.get(repo, "username", fallback=None)
+                    password = parser.get(repo, "password", fallback=None)
+
             if password is None:
                 password = getpass.getpass("Password: ")
 
@@ -206,7 +232,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="PyPi Package Cleanup Utility",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("-u", "--username", required=True, help="authentication username")
+    parser.add_argument("-u", "--username", help="authentication username")
     parser.add_argument("-p", "--package", required=True, help="PyPI package name")
     parser.add_argument("-t", "--host", default="https://pypi.org/", dest="url", help="PyPI <proto>://<host> prefix")
     parser.add_argument("-r", "--version-regex", type=re.compile, action="append",
@@ -214,6 +240,8 @@ def main():
     parser.add_argument("--do-it", action="store_true", default=False, help="actually perform the destructive delete")
     parser.add_argument("-y", "--yes", action="store_true", default=False, dest="confirm",
                         help="confirm extremely dangerous destructive delete")
+    parser.add_argument("-d", "--days", type=int, default=0,
+                        help="only delete releases where all files are older than X days")
     parser.add_argument("-v", "--verbose", action="store_const", const=1, default=0, help="be verbose")
 
     args = parser.parse_args()
