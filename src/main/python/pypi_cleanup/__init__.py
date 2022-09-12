@@ -107,7 +107,8 @@ class PypiCleanup:
 
                 releases_by_date = {}
                 for release, files in r.json()["releases"].items():
-                    releases_by_date[release] = max([datetime.datetime.strptime(f["upload_time"], '%Y-%m-%dT%H:%M:%S') for f in files])
+                    releases_by_date[release] = max([datetime.datetime.strptime(f["upload_time"],
+                                                                                '%Y-%m-%dT%H:%M:%S') for f in files])
 
             if not releases_by_date:
                 logging.info(f"No releases for package {self.package} have been found")
