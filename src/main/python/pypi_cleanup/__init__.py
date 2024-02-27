@@ -80,7 +80,7 @@ class PypiCleanup:
         self.package = package
         self.patterns = patterns or DEFAULT_PATTERNS
         self.verbose = verbose
-        self.date = datetime.datetime.now() - datetime.timedelta(days=days)
+        self.date = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days)
 
     def run(self):
         csrf = None
@@ -89,29 +89,31 @@ class PypiCleanup:
             logging.root.setLevel(logging.DEBUG)
 
         if self.do_it:
-            logging.warning("!!! WILL ACTUALLY DELETE THINGS !!!")
-            logging.warning("Will sleep for 3 seconds - Ctrl-C to abort!")
-            time.sleep(3.0)
+            logging.warning("!!! POSSIBLE DESTRUCTIVE OPERATION !!!")
         else:
             logging.info("Running in DRY RUN mode")
 
-        logging.info(f"Will use the following patterns {self.patterns} on package {self.package}")
+        logging.info(f"Will use the following patterns {self.patterns} on package {self.package!r}")
 
         with requests.Session() as s:
-            with s.get(f"{self.url}/pypi/{self.package}/json") as r:
+            with s.get(f"{self.url}/simple/{self.package}/",
+                       headers={"Accept": "application/vnd.pypi.simple.v1+json"}) as r:
                 try:
                     r.raise_for_status()
                 except RequestException as e:
-                    logging.error(f"Unable to find package {repr(self.package)}", exc_info=e)
+                    logging.error(f"Unable to find package {self.package!r}", exc_info=e)
                     return 1
 
+                project_info = r.json()
                 releases_by_date = {}
-                for release, files in r.json()["releases"].items():
-                    releases_by_date[release] = max([datetime.datetime.strptime(f["upload_time"],
-                                                                                '%Y-%m-%dT%H:%M:%S') for f in files])
+                for version in project_info["versions"]:
+                    releases_by_date[version] = max(
+                        [datetime.datetime.strptime(f["upload-time"], '%Y-%m-%dT%H:%M:%S.%f%z')
+                         for f in project_info["files"]
+                         if f["filename"].lower().startswith(f"{self.package}-{version}")])
 
             if not releases_by_date:
-                logging.info(f"No releases for package {self.package} have been found")
+                logging.info(f"No releases for package {self.package!r} have been found")
                 return
 
             pkg_vers = list(filter(lambda k:
@@ -120,14 +122,15 @@ class PypiCleanup:
                                    releases_by_date.keys()))
 
             if not pkg_vers:
-                logging.info(f"No releases were found matching specified patterns and dates in package {self.package}")
+                logging.info(f"No releases were found matching specified patterns "
+                             f"and dates in package {self.package!r}")
                 return
 
             if set(pkg_vers) == set(releases_by_date.keys()):
                 print(dedent(f"""
                 WARNING:
                 \tYou have selected the following patterns: {self.patterns}
-                \tThese patterns would delete all available released versions of `{self.package}`.
+                \tThese patterns would delete all available released versions of {self.package!r}.
                 \tThis will render your project/package permanently inaccessible.
                 \tSince the costs of an error are too high I'm refusing to do this.
                 \tGoodbye.
@@ -135,6 +138,10 @@ class PypiCleanup:
 
                 if not self.do_it:
                     return 3
+
+            logging.info("Found the following releases to delete:")
+            for pkg_ver in pkg_vers:
+                logging.info(f" {pkg_ver}")
 
             password = os.getenv("PYPI_CLEANUP_PASSWORD")
 
@@ -201,9 +208,14 @@ class PypiCleanup:
                         logging.error(f"Authentication code {auth_code} is invalid")
                         return 1
 
+            if self.do_it:
+                logging.warning("!!! WILL ACTUALLY DELETE THINGS - LAST CHANCE TO CHANGE YOUR MIND !!!")
+                logging.warning("Sleeping for 5 seconds - Ctrl-C to abort!")
+                time.sleep(5.0)
+
             for pkg_ver in pkg_vers:
                 if self.do_it:
-                    logging.info(f"Deleting {self.package} version {pkg_ver}")
+                    logging.info(f"Deleting {self.package!r} version {pkg_ver}")
                     form_action = f"/manage/project/{self.package}/release/{pkg_ver}/"
                     form_url = f"{self.url}{form_action}"
                     with s.get(form_url) as r:
@@ -222,9 +234,9 @@ class PypiCleanup:
                                 headers={"referer": referer}) as r:
                         r.raise_for_status()
 
-                    logging.info(f"Deleted {self.package} version {pkg_ver}")
+                    logging.info(f"Deleted {self.package!r} version {pkg_ver}")
                 else:
-                    logging.info(f"Would be deleting {self.package} version {pkg_ver}, but not doing it!")
+                    logging.info(f"Would be deleting {self.package!r} version {pkg_ver}, but not doing it!")
 
 
 def main():
