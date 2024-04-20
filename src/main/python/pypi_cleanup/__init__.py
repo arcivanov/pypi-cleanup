@@ -71,7 +71,7 @@ class CsfrParser(HTMLParser):
 
 
 class PypiCleanup:
-    def __init__(self, url, username, package, do_it, patterns, verbose, days, **_):
+    def __init__(self, url, username, package, do_it, patterns, verbose, days, query_only, **_):
         self.url = urlparse(url).geturl()
         if self.url[-1] == "/":
             self.url = self.url[:-1]
@@ -80,7 +80,8 @@ class PypiCleanup:
         self.package = package
         self.patterns = patterns or DEFAULT_PATTERNS
         self.verbose = verbose
-        self.date = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days)
+        self.query_only = query_only
+        self.date = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
 
     def run(self):
         csrf = None
@@ -124,9 +125,12 @@ class PypiCleanup:
             if not pkg_vers:
                 logging.info(f"No releases were found matching specified patterns "
                              f"and dates in package {self.package!r}")
-                return
+            else:
+                logging.info("Found the following releases to delete:")
+                for pkg_ver in pkg_vers:
+                    logging.info(f" {pkg_ver}")
 
-            if set(pkg_vers) == set(releases_by_date.keys()):
+            if pkg_vers and set(pkg_vers) == set(releases_by_date.keys()):
                 print(dedent(f"""
                 WARNING:
                 \tYou have selected the following patterns: {self.patterns}
@@ -139,9 +143,12 @@ class PypiCleanup:
                 if not self.do_it:
                     return 3
 
-            logging.info("Found the following releases to delete:")
-            for pkg_ver in pkg_vers:
-                logging.info(f" {pkg_ver}")
+            if self.query_only:
+                logging.info("Query-only mode - exiting")
+                return
+
+            if not pkg_vers:
+                return
 
             password = os.getenv("PYPI_CLEANUP_PASSWORD")
 
@@ -242,33 +249,40 @@ class PypiCleanup:
 def main():
     logging.basicConfig(level=logging.INFO)
 
-    parser = argparse.ArgumentParser(description="PyPi Package Cleanup Utility",
-                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("-u", "--username", help="authentication username")
-    parser.add_argument("-p", "--package", required=True, help="PyPI package name")
-    parser.add_argument("-t", "--host", default="https://pypi.org/", dest="url", help="PyPI <proto>://<host> prefix")
-    parser.add_argument("-r", "--version-regex", type=re.compile, action="append",
-                        dest="patterns", help="regex to use to match package versions to be deleted")
-    parser.add_argument("--do-it", action="store_true", default=False, help="actually perform the destructive delete")
-    parser.add_argument("-y", "--yes", action="store_true", default=False, dest="confirm",
-                        help="confirm extremely dangerous destructive delete")
-    parser.add_argument("-d", "--days", type=int, default=0,
-                        help="only delete releases where all files are older than X days")
-    parser.add_argument("-v", "--verbose", action="store_const", const=1, default=0, help="be verbose")
+    try:
+        parser = argparse.ArgumentParser(description="PyPi Package Cleanup Utility",
+                                         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+        parser.add_argument("-u", "--username", help="authentication username")
+        parser.add_argument("-p", "--package", required=True, help="PyPI package name")
+        parser.add_argument("-t", "--host", default="https://pypi.org/", dest="url",
+                            help="PyPI <proto>://<host> prefix")
+        parser.add_argument("-r", "--version-regex", type=re.compile, action="append",
+                            dest="patterns", help="regex to use to match package versions to be deleted")
+        parser.add_argument("--query-only", action="store_true", default=False,
+                            help="only queries and processes the package, no login required")
+        parser.add_argument("--do-it", action="store_true", default=False,
+                            help="actually perform the destructive delete")
+        parser.add_argument("-y", "--yes", action="store_true", default=False, dest="confirm",
+                            help="confirm extremely dangerous destructive delete")
+        parser.add_argument("-d", "--days", type=int, default=0,
+                            help="only delete releases where all files are older than X days")
+        parser.add_argument("-v", "--verbose", action="store_const", const=1, default=0, help="be verbose")
 
-    args = parser.parse_args()
-    if args.patterns and not args.confirm and not args.do_it:
-        logging.warning(dedent(f"""
-        WARNING:
-        \tYou're using custom patterns: {args.patterns}.
-        \tIf you make a mistake in your patterns you can potentially wipe critical versions irrecoverably.
-        \tMake sure to test your patterns before running the destructive cleanup.
-        \tOnce you're satisfied the patterns are correct re-run with `-y`/`--yes` to confirm you know what you're doing.
-        \tGoodbye.
-        \t"""))
-        return 3
+        args = parser.parse_args()
+        if args.patterns and not args.confirm and not args.do_it:
+            logging.warning(dedent(f"""
+            WARNING:
+            \tYou're using custom patterns: {args.patterns}.
+            \tIf you make a mistake in your patterns you can potentially wipe critical versions irrecoverably.
+            \tMake sure to test your patterns before running the destructive cleanup.
+            \tOnce you're satisfied the patterns are correct re-run with `-y`/`--yes` to confirm you know what you're doing.
+            \tGoodbye.
+            \t"""))
+            return 3
 
-    return PypiCleanup(**vars(args)).run()
+        return PypiCleanup(**vars(args)).run()
+    finally:
+        logging.shutdown()
 
 
 if __name__ == "__main__":
