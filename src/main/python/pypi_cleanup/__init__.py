@@ -111,7 +111,8 @@ class PypiCleanup:
                     releases_by_date[version] = max(
                         [datetime.datetime.strptime(f["upload-time"], '%Y-%m-%dT%H:%M:%S.%f%z')
                          for f in project_info["files"]
-                         if f["filename"].lower().startswith(f"{self.package}-{version}")])
+                         if f["filename"].lower().startswith(f"{self.package}-{version}") or
+                         f["filename"].lower().startswith(f"{self.package.replace('-', '_')}-{version}")])
 
             if not releases_by_date:
                 logging.info(f"No releases for package {self.package!r} have been found")
