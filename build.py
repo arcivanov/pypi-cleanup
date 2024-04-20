@@ -25,7 +25,7 @@ use_plugin("python.distutils")
 use_plugin("python.pycharm")
 
 name = "pypi-cleanup"
-version = "0.1.6"
+version = "0.1.7.dev"
 summary = "PyPI Bulk Release Version Cleanup Utility"
 
 authors = [Author("Arcadiy Ivanov", "arcadiy@ivanov.biz")]
