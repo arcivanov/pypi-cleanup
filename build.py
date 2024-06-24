@@ -23,6 +23,9 @@ use_plugin("python.flake8")
 use_plugin("python.coverage")
 use_plugin("python.distutils")
 use_plugin("python.pycharm")
+use_plugin("copy_resources")
+use_plugin("filter_resources")
+
 
 name = "pypi-cleanup"
 version = "0.1.7.dev"
@@ -57,7 +60,10 @@ def set_properties(project):
     project.set_property("flake8_max_line_length", 130)
 
     project.set_property("copy_resources_target", "$dir_dist/pypi_cleanup")
+    project.get_property("copy_resources_glob").append("LICENSE")
     project.include_file("pypi_cleanup", "LICENSE")
+    project.set_property("filter_resources_target", "$dir_dist")
+    project.get_property("filter_resources_glob").append("pypi_cleanup/__version__.py")
 
     project.set_property("distutils_readme_description", True)
     project.set_property("distutils_description_overwrite", True)

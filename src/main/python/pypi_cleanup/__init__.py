@@ -28,7 +28,10 @@ from textwrap import dedent
 from urllib.parse import urlparse
 
 import requests
+from requests.__version__ import __version__ as requests_version
 from requests.exceptions import RequestException
+
+from pypi_cleanup.__version__ import __version__
 
 DEFAULT_PATTERNS = [re.compile(r".*\.dev\d+$")]
 
@@ -97,6 +100,8 @@ class PypiCleanup:
         logging.info(f"Will use the following patterns {self.patterns} on package {self.package!r}")
 
         with requests.Session() as s:
+            s.headers.update({"User-Agent": f"pypi-cleanup/{__version__} (requests/{requests_version})"})
+
             with s.get(f"{self.url}/simple/{self.package}/",
                        headers={"Accept": "application/vnd.pypi.simple.v1+json"}) as r:
                 try:
@@ -251,7 +256,7 @@ def main():
     logging.basicConfig(level=logging.INFO)
 
     try:
-        parser = argparse.ArgumentParser(description="PyPi Package Cleanup Utility",
+        parser = argparse.ArgumentParser(description=f"PyPi Package Cleanup Utility v{__version__}",
                                          formatter_class=argparse.ArgumentDefaultsHelpFormatter)
         parser.add_argument("-u", "--username", help="authentication username")
         parser.add_argument("-p", "--package", required=True, help="PyPI package name")
