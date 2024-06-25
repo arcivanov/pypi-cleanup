@@ -74,7 +74,7 @@ class CsfrParser(HTMLParser):
 
 
 class PypiCleanup:
-    def __init__(self, url, username, package, do_it, patterns, verbose, days, query_only, **_):
+    def __init__(self, url, username, package, do_it, patterns, verbose, days, query_only, leave_most_recent_only, **_):
         self.url = urlparse(url).geturl()
         if self.url[-1] == "/":
             self.url = self.url[:-1]
@@ -84,6 +84,7 @@ class PypiCleanup:
         self.patterns = patterns or DEFAULT_PATTERNS
         self.verbose = verbose
         self.query_only = query_only
+        self.leave_most_recent_only = leave_most_recent_only
         self.date = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
 
     def run(self):
@@ -97,7 +98,10 @@ class PypiCleanup:
         else:
             logging.info("Running in DRY RUN mode")
 
-        logging.info(f"Will use the following patterns {self.patterns} on package {self.package!r}")
+        if not self.leave_most_recent_only:
+            logging.info(f"Will use the following patterns {self.patterns} on package {self.package!r}")
+        else:
+            logging.info(f"Will only leave the MOST RECENT version of the package {self.package!r}")
 
         with requests.Session() as s:
             s.headers.update({"User-Agent": f"pypi-cleanup/{__version__} (requests/{requests_version})"})
@@ -112,21 +116,35 @@ class PypiCleanup:
 
                 project_info = r.json()
                 releases_by_date = {}
+
+                def package_matches_file(p, v, f):
+                    filename = f["filename"].lower()
+                    if filename.endswith(".whl") or filename.endswith(".egg") or filename.endswith(".src.rpm"):
+                        return filename.startswith(f"{p.replace('-', '_')}-{v}-")
+
+                    return filename in (f"{p}-{v}.tar.gz", f"{p}-{v}.zip")
+
                 for version in project_info["versions"]:
                     releases_by_date[version] = max(
-                        [datetime.datetime.strptime(f["upload-time"], '%Y-%m-%dT%H:%M:%S.%f%z')
+                        [datetime.datetime.strptime(f["upload-time"], "%Y-%m-%dT%H:%M:%S.%f%z")
                          for f in project_info["files"]
-                         if f["filename"].lower().startswith(f"{self.package}-{version}") or
-                         f["filename"].lower().startswith(f"{self.package.replace('-', '_')}-{version}")])
+                         if package_matches_file(self.package, version, f)])
 
             if not releases_by_date:
                 logging.info(f"No releases for package {self.package!r} have been found")
                 return
 
-            pkg_vers = list(filter(lambda k:
-                                   any(filter(lambda rex: rex.match(k),
-                                              self.patterns)) and releases_by_date[k] < self.date,
-                                   releases_by_date.keys()))
+            if self.leave_most_recent_only:
+                leave_release = max(releases_by_date, key=releases_by_date.get)
+                logging.info(
+                    f"Leaving the MOST RECENT package version: {leave_release} - "
+                    f"{releases_by_date[leave_release].strftime('%Y-%m-%dT%H:%M:%S.%f%z')}")
+                pkg_vers = list(r for r in releases_by_date if r != leave_release)
+            else:
+                pkg_vers = list(filter(lambda k:
+                                       any(filter(lambda rex: rex.match(k),
+                                                  self.patterns)) and releases_by_date[k] < self.date,
+                                       releases_by_date.keys()))
 
             if not pkg_vers:
                 logging.info(f"No releases were found matching specified patterns "
@@ -262,8 +280,12 @@ def main():
         parser.add_argument("-p", "--package", required=True, help="PyPI package name")
         parser.add_argument("-t", "--host", default="https://pypi.org/", dest="url",
                             help="PyPI <proto>://<host> prefix")
-        parser.add_argument("-r", "--version-regex", type=re.compile, action="append",
-                            dest="patterns", help="regex to use to match package versions to be deleted")
+        g = parser.add_mutually_exclusive_group()
+        g.add_argument("-r", "--version-regex", type=re.compile, action="append",
+                       dest="patterns", help="regex to use to match package versions to be deleted")
+        g.add_argument("--leave-most-recent-only", action="store_true", default=False,
+                       help="delete all releases except the *most recent* one, i.e. the one containing "
+                            "the most recently created files")
         parser.add_argument("--query-only", action="store_true", default=False,
                             help="only queries and processes the package, no login required")
         parser.add_argument("--do-it", action="store_true", default=False,
@@ -271,7 +293,8 @@ def main():
         parser.add_argument("-y", "--yes", action="store_true", default=False, dest="confirm",
                             help="confirm extremely dangerous destructive delete")
         parser.add_argument("-d", "--days", type=int, default=0,
-                            help="only delete releases where all files are older than X days")
+                            help="only delete releases **matching specified patterns** where all files are "
+                                 "older than X days")
         parser.add_argument("-v", "--verbose", action="store_const", const=1, default=0, help="be verbose")
 
         args = parser.parse_args()
@@ -282,6 +305,21 @@ def main():
             \tIf you make a mistake in your patterns you can potentially wipe critical versions irrecoverably.
             \tMake sure to test your patterns before running the destructive cleanup.
             \tOnce you're satisfied the patterns are correct re-run with `-y`/`--yes` to confirm you know what you're doing.
+            \tGoodbye.
+            \t"""))
+            return 3
+
+        if args.leave_most_recent_only and not args.confirm and not args.do_it:
+            logging.warning(dedent("""
+            WARNING:
+            \tYou're trying to delete ALL versions of the package EXCEPT for the *most recent one*, i.e.
+            \tthe one with the most recent (by the wall clock) files, disregarding the actual version numbers
+            \tor versioning schemes!
+            \t
+            \tYou can potentially wipe critical versions irrecoverably.
+            \tMake sure this is what you really want before running the destructive cleanup.
+            \tOnce you're sure you want to delete all versions except the most recent one,
+            \tre-run with `-y`/`--yes` to confirm you know what you're doing.
             \tGoodbye.
             \t"""))
             return 3
