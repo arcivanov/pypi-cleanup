@@ -74,13 +74,16 @@ class CsfrParser(HTMLParser):
 
 
 class PypiCleanup:
-    def __init__(self, url, username, package, do_it, patterns, verbose, days, query_only, leave_most_recent_only, **_):
+    def __init__(self, url, username, packages, do_it, patterns, verbose, days, query_only, leave_most_recent_only,
+                 confirm, delete_project, **_):
         self.url = urlparse(url).geturl()
         if self.url[-1] == "/":
             self.url = self.url[:-1]
         self.username = username
         self.do_it = do_it
-        self.package = package
+        self.confirm = confirm
+        self.delete_project = delete_project
+        self.packages = packages
         self.patterns = patterns or DEFAULT_PATTERNS
         self.verbose = verbose
         self.query_only = query_only
@@ -93,85 +96,102 @@ class PypiCleanup:
         if self.verbose:
             logging.root.setLevel(logging.DEBUG)
 
-        if self.do_it:
-            logging.warning("!!! POSSIBLE DESTRUCTIVE OPERATION !!!")
+        if not self.query_only:
+            if self.do_it:
+                logging.warning("!!! POSSIBLE DESTRUCTIVE OPERATION !!!")
+            else:
+                logging.info("Running in DRY RUN mode")
         else:
-            logging.info("Running in DRY RUN mode")
+            logging.info("Running in QUERY-ONLY mode")
 
-        if not self.leave_most_recent_only:
-            logging.info(f"Will use the following patterns {self.patterns} on package {self.package!r}")
-        else:
-            logging.info(f"Will only leave the MOST RECENT version of the package {self.package!r}")
+        for package in self.packages:
+            if not self.leave_most_recent_only:
+                logging.info(f"Will use the following patterns {self.patterns} on package {package!r}")
+            else:
+                logging.info(f"Will only leave the MOST RECENT version of the package {package!r}")
 
         with requests.Session() as s:
             s.headers.update({"User-Agent": f"pypi-cleanup/{__version__} (requests/{requests_version})"})
 
-            with s.get(f"{self.url}/simple/{self.package}/",
-                       headers={"Accept": "application/vnd.pypi.simple.v1+json"}) as r:
-                try:
-                    r.raise_for_status()
-                except RequestException as e:
-                    logging.error(f"Unable to find package {self.package!r}", exc_info=e)
-                    return 1
+            pkg_to_pkg_vers = {}
+            for package in self.packages:
+                with s.get(f"{self.url}/simple/{package}/",
+                           headers={"Accept": "application/vnd.pypi.simple.v1+json"}) as r:
+                    try:
+                        r.raise_for_status()
+                    except RequestException as e:
+                        logging.error(f"Unable to find package {package!r}", exc_info=e)
+                        return 1
 
-                project_info = r.json()
-                releases_by_date = {}
+                    project_info = r.json()
+                    releases_by_date = {}
 
-                def package_matches_file(p, v, f):
-                    filename = f["filename"].lower()
-                    if filename.endswith(".whl") or filename.endswith(".egg") or filename.endswith(".src.rpm"):
-                        return filename.startswith(f"{p.replace('-', '_')}-{v}-")
+                    def package_matches_file(p, v, f):
+                        filename = f["filename"].lower()
+                        if filename.endswith(".whl") or filename.endswith(".egg") or filename.endswith(".src.rpm"):
+                            return filename.startswith(f"{p.replace('-', '_')}-{v}-")
 
-                    return filename in (f"{p}-{v}.tar.gz", f"{p}-{v}.zip")
+                        return filename in (f"{p}-{v}.tar.gz", f"{p}-{v}.zip")
 
-                for version in project_info["versions"]:
-                    releases_by_date[version] = max(
-                        [datetime.datetime.strptime(f["upload-time"], "%Y-%m-%dT%H:%M:%S.%f%z")
-                         for f in project_info["files"]
-                         if package_matches_file(self.package, version, f)])
+                    for version in project_info["versions"]:
+                        releases_by_date[version] = max(
+                            [datetime.datetime.strptime(f["upload-time"], "%Y-%m-%dT%H:%M:%S.%f%z")
+                             for f in project_info["files"]
+                             if package_matches_file(package, version, f)])
 
-            if not releases_by_date:
-                logging.info(f"No releases for package {self.package!r} have been found")
-                return
+                if not releases_by_date:
+                    logging.info(f"No releases for package {package!r} have been found")
+                    continue
 
-            if self.leave_most_recent_only:
-                leave_release = max(releases_by_date, key=releases_by_date.get)
-                logging.info(
-                    f"Leaving the MOST RECENT package version: {leave_release} - "
-                    f"{releases_by_date[leave_release].strftime('%Y-%m-%dT%H:%M:%S.%f%z')}")
-                pkg_vers = list(r for r in releases_by_date if r != leave_release)
-            else:
-                pkg_vers = list(filter(lambda k:
-                                       any(filter(lambda rex: rex.match(k),
-                                                  self.patterns)) and releases_by_date[k] < self.date,
-                                       releases_by_date.keys()))
+                if self.leave_most_recent_only:
+                    leave_release = max(releases_by_date, key=releases_by_date.get)
+                    logging.info(
+                        f"Leaving the MOST RECENT version for {package!r}: {leave_release} - "
+                        f"{releases_by_date[leave_release].strftime('%Y-%m-%dT%H:%M:%S.%f%z')}")
+                    pkg_vers = list(r for r in releases_by_date if r != leave_release)
+                else:
+                    pkg_vers = list(filter(lambda k:
+                                           any(filter(lambda rex: rex.match(k),
+                                                      self.patterns)) and releases_by_date[k] < self.date,
+                                           releases_by_date.keys()))
 
-            if not pkg_vers:
-                logging.info(f"No releases were found matching specified patterns "
-                             f"and dates in package {self.package!r}")
-            else:
-                logging.info("Found the following releases to delete:")
-                for pkg_ver in pkg_vers:
-                    logging.info(f" {pkg_ver}")
+                if not pkg_vers:
+                    logging.info(f"No releases were found matching specified patterns "
+                                 f"and dates in package {package!r}")
+                else:
+                    logging.info(f"Found the following releases of package {package!r} to delete:")
+                    for pkg_ver in pkg_vers:
+                        logging.info(f" {pkg_ver}")
 
-            if pkg_vers and set(pkg_vers) == set(releases_by_date.keys()):
-                print(dedent(f"""
-                WARNING:
-                \tYou have selected the following patterns: {self.patterns}
-                \tThese patterns would delete all available released versions of {self.package!r}.
-                \tThis will render your project/package permanently inaccessible.
-                \tSince the costs of an error are too high I'm refusing to do this.
-                \tGoodbye.
-                """), file=sys.stderr)
+                if pkg_vers and set(pkg_vers) == set(releases_by_date.keys()):
+                    msg = f"""
+                    WARNING:
+                    \tYou have selected the following patterns: {self.patterns}
+                    \tThese patterns would delete ALL AVAILABLE RELEASED VERSIONS of {package!r}.
+                    \tThis will render your project/package permanently inaccessible.
+                    """
 
-                if not self.do_it:
-                    return 3
+                    if not self.delete_project:
+                        print(dedent(f"""
+                        {msg}
+                        \tSince the costs of an error are too high I'm refusing to do this.
+                        \tGoodbye.
+                        """), file=sys.stderr)
+                        return 3
+                    else:
+                        print(dedent(f"""
+                        {msg}
+                        \tSince you've specified "--delete-project", I will proceed anyway.
+                        """), file=sys.stderr)
+
+                if pkg_vers:
+                    pkg_to_pkg_vers[package] = pkg_vers
 
             if self.query_only:
                 logging.info("Query-only mode - exiting")
                 return
 
-            if not pkg_vers:
+            if not pkg_to_pkg_vers:
                 return
 
             password = os.getenv("PYPI_CLEANUP_PASSWORD")
@@ -244,30 +264,31 @@ class PypiCleanup:
                 logging.warning("Sleeping for 5 seconds - Ctrl-C to abort!")
                 time.sleep(5.0)
 
-            for pkg_ver in pkg_vers:
-                if self.do_it:
-                    logging.info(f"Deleting {self.package!r} version {pkg_ver}")
-                    form_action = f"/manage/project/{self.package}/release/{pkg_ver}/"
-                    form_url = f"{self.url}{form_action}"
-                    with s.get(form_url) as r:
-                        r.raise_for_status()
-                        parser = CsfrParser(form_action, "confirm_delete_version")
-                        parser.feed(r.text)
-                        if not parser.csrf:
-                            raise ValueError(f"No CSFR found in {form_action}")
-                        csrf = parser.csrf
-                        referer = r.url
+            for package, pkg_vers in pkg_to_pkg_vers.items():
+                for pkg_ver in pkg_vers:
+                    if self.do_it:
+                        logging.info(f"Deleting {package!r} version {pkg_ver}")
+                        form_action = f"/manage/project/{package}/release/{pkg_ver}/"
+                        form_url = f"{self.url}{form_action}"
+                        with s.get(form_url) as r:
+                            r.raise_for_status()
+                            parser = CsfrParser(form_action, "confirm_delete_version")
+                            parser.feed(r.text)
+                            if not parser.csrf:
+                                raise ValueError(f"No CSFR found in {form_action}")
+                            csrf = parser.csrf
+                            referer = r.url
 
-                    with s.post(form_url,
-                                data={"csrf_token": csrf,
-                                      "confirm_delete_version": pkg_ver,
-                                      },
-                                headers={"referer": referer}) as r:
-                        r.raise_for_status()
+                        with s.post(form_url,
+                                    data={"csrf_token": csrf,
+                                          "confirm_delete_version": pkg_ver,
+                                          },
+                                    headers={"referer": referer}) as r:
+                            r.raise_for_status()
 
-                    logging.info(f"Deleted {self.package!r} version {pkg_ver}")
-                else:
-                    logging.info(f"Would be deleting {self.package!r} version {pkg_ver}, but not doing it!")
+                        logging.info(f"Deleted {package!r} version {pkg_ver}")
+                    else:
+                        logging.info(f"Would be deleting {package!r} version {pkg_ver}, but not doing it!")
 
 
 def main():
@@ -277,7 +298,8 @@ def main():
         parser = argparse.ArgumentParser(description=f"PyPi Package Cleanup Utility v{__version__}",
                                          formatter_class=argparse.ArgumentDefaultsHelpFormatter)
         parser.add_argument("-u", "--username", help="authentication username")
-        parser.add_argument("-p", "--package", required=True, help="PyPI package name")
+        parser.add_argument("-p", "--package", dest="packages", action="append", required=True,
+                            help="PyPI package name")
         parser.add_argument("-t", "--host", default="https://pypi.org/", dest="url",
                             help="PyPI <proto>://<host> prefix")
         g = parser.add_mutually_exclusive_group()
@@ -290,6 +312,8 @@ def main():
                             help="only queries and processes the package, no login required")
         parser.add_argument("--do-it", action="store_true", default=False,
                             help="actually perform the destructive delete")
+        parser.add_argument("--delete-project", action="store_true", default=False,
+                            help="actually perform the destructive delete that will remove all versions of the project")
         parser.add_argument("-y", "--yes", action="store_true", default=False, dest="confirm",
                             help="confirm extremely dangerous destructive delete")
         parser.add_argument("-d", "--days", type=int, default=0,
@@ -298,7 +322,7 @@ def main():
         parser.add_argument("-v", "--verbose", action="store_const", const=1, default=0, help="be verbose")
 
         args = parser.parse_args()
-        if args.patterns and not args.confirm and not args.do_it:
+        if args.patterns and not args.confirm and not args.do_it and not args.query_only:
             logging.warning(dedent(f"""
             WARNING:
             \tYou're using custom patterns: {args.patterns}.
@@ -309,7 +333,7 @@ def main():
             \t"""))
             return 3
 
-        if args.leave_most_recent_only and not args.confirm and not args.do_it:
+        if args.leave_most_recent_only and not args.confirm and not args.do_it and not args.query_only:
             logging.warning(dedent("""
             WARNING:
             \tYou're trying to delete ALL versions of the package EXCEPT for the *most recent one*, i.e.
