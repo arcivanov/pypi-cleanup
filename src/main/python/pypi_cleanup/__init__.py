@@ -136,9 +136,9 @@ class PypiCleanup:
 
                     for version in project_info["versions"]:
                         matches = [datetime.datetime.strptime(f["upload-time"], "%Y-%m-%dT%H:%M:%S.%f%z")
-                             for f in project_info["files"]
-                             if package_matches_file(package, version, f)]
-                        if len(matches) > 0:
+                                   for f in project_info["files"]
+                                   if package_matches_file(package, version, f)]
+                        if matches:
                             releases_by_date[version] = max(matches)
 
                 if not releases_by_date:
