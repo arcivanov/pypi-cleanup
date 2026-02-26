@@ -28,7 +28,7 @@ use_plugin("filter_resources")
 
 
 name = "pypi-cleanup"
-version = "0.1.9"
+version = "0.1.10"
 summary = "PyPI Bulk Release Version Cleanup Utility"
 
 authors = [Author("Arcadiy Ivanov", "arcadiy@ivanov.biz")]
@@ -41,7 +41,7 @@ urls = {"Bug Tracker": "https://github.com/arcivanov/pypi-cleanup/issues",
         "Documentation": "https://github.com/arcivanov/pypi-cleanup"
         }
 
-requires_python = ">=3.7"
+requires_python = ">=3.9"
 
 default_task = ["analyze", "publish"]
 
