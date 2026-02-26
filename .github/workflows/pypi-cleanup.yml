@@ -14,14 +14,14 @@ jobs:
         os:
           - ubuntu-latest
         python-version:
+          - '3.14'
+          - '3.13'
           - '3.12'
           - '3.11'
           - '3.10'
           - '3.9'
-          - '3.8'
-          - '3.7'
     env:
-      DEPLOY_PYTHONS: "3.12"
+      DEPLOY_PYTHONS: "3.14"
       DEPLOY_OSES: "Linux"
       TWINE_USERNAME: __token__
       TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
