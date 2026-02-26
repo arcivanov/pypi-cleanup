@@ -128,8 +128,9 @@ class PypiCleanup:
 
                     def package_matches_file(p, v, f):
                         filename = f["filename"].lower()
+                        p = p.lower().replace('-', '_')
                         if filename.endswith(".whl") or filename.endswith(".egg") or filename.endswith(".src.rpm"):
-                            return filename.startswith(f"{p.replace('-', '_')}-{v}-")
+                            return filename.startswith(f"{p}-{v}-")
 
                         return filename in (f"{p}-{v}.tar.gz", f"{p}-{v}.zip")
 

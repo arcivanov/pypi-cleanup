@@ -33,7 +33,7 @@ summary = "PyPI Bulk Release Version Cleanup Utility"
 
 authors = [Author("Arcadiy Ivanov", "arcadiy@ivanov.biz")]
 maintainers = [Author("Arcadiy Ivanov", "arcadiy@ivanov.biz")]
-license = "Apache License, Version 2.0"
+license = "Apache-2.0"
 
 url = "https://github.com/arcivanov/pypi-cleanup"
 urls = {"Bug Tracker": "https://github.com/arcivanov/pypi-cleanup/issues",
@@ -74,12 +74,12 @@ def set_properties(project):
         "Programming Language :: Python :: Implementation :: CPython",
         "Programming Language :: Python :: Implementation :: PyPy",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.7",
-        "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
         "Operating System :: MacOS :: MacOS X",
         "Operating System :: POSIX :: Linux",
         "Operating System :: Microsoft :: Windows",
@@ -87,6 +87,5 @@ def set_properties(project):
         "Development Status :: 5 - Production/Stable",
         "Environment :: Console",
         "Intended Audience :: Developers",
-        "License :: OSI Approved :: Apache Software License",
         "Topic :: Software Development :: Build Tools"])
     project.set_property("distutils_setup_keywords", ["PyPI", "cleanup", "build", "dev", "tool", "release", "version"])
