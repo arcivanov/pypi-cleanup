@@ -135,10 +135,11 @@ class PypiCleanup:
                         return filename in (f"{p}-{v}.tar.gz", f"{p}-{v}.zip")
 
                     for version in project_info["versions"]:
-                        releases_by_date[version] = max(
-                            [datetime.datetime.strptime(f["upload-time"], "%Y-%m-%dT%H:%M:%S.%f%z")
-                             for f in project_info["files"]
-                             if package_matches_file(package, version, f)])
+                        matches = [datetime.datetime.strptime(f["upload-time"], "%Y-%m-%dT%H:%M:%S.%f%z")
+                                   for f in project_info["files"]
+                                   if package_matches_file(package, version, f)]
+                        if matches:
+                            releases_by_date[version] = max(matches)
 
                 if not releases_by_date:
                     logging.info(f"No releases for package {package!r} have been found")
