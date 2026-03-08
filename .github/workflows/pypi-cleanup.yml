@@ -26,18 +26,16 @@ jobs:
       TWINE_USERNAME: __token__
       TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: write
     steps:
-      - shell: bash
-        if: |
-          github.event_name == 'push' &&
-          contains(env.DEPLOY_OSES, runner.os) &&
-          contains(env.DEPLOY_PYTHONS, matrix.python-version)
-        run: |
-          echo "PYB_EXTRA_ARGS=+upload" >> $GITHUB_ENV
       - uses: pybuilder/build@master
         with:
           python-version: ${{ matrix.python-version }}
-          pyb-extra-args: ${{ env.PYB_EXTRA_ARGS }}
+          is-upload: >-
+            ${{ github.event_name == 'push'
+            && contains(env.DEPLOY_OSES, runner.os)
+            && contains(env.DEPLOY_PYTHONS, matrix.python-version) }}
   build-stable-summary:
     if: success() || failure()
     runs-on: ubuntu-latest
