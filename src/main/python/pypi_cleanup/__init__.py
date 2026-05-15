@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import sys
+import tempfile
 import time
 from html.parser import HTMLParser
 from textwrap import dedent
@@ -36,7 +37,30 @@ from pypi_cleanup.__version__ import __version__
 DEFAULT_PATTERNS = [re.compile(r".*\.dev\d+$")]
 
 
-class CsfrParser(HTMLParser):
+class PageTitleParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self._in_title = False
+        self._title = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "title":
+            self._in_title = True
+
+    def handle_data(self, data):
+        if self._in_title:
+            self._title.append(data.strip())
+
+    def handle_endtag(self, tag):
+        if tag == "title":
+            self._in_title = False
+
+    @property
+    def title(self):
+        return " ".join(part for part in self._title if part)
+
+
+class CsrfParser(HTMLParser):
     def __init__(self, target, contains_input=None):
         super().__init__()
         self._target = target
@@ -50,7 +74,9 @@ class CsfrParser(HTMLParser):
         if tag == "form":
             attrs = dict(attrs)
             action = attrs.get("action")  # Might be None.
-            if action and (action == self._target or action.startswith(self._target)):
+            self._csrf = None
+            self._input_contained = False
+            if action and self._form_action_matches(action):
                 self._in_form = True
             return
 
@@ -64,6 +90,13 @@ class CsfrParser(HTMLParser):
 
             return
 
+    def _form_action_matches(self, action):
+        if action == self._target or action.startswith(self._target):
+            return True
+
+        parsed = urlparse(action)
+        return bool(parsed.path and (parsed.path == self._target or parsed.path.startswith(self._target)))
+
     def handle_endtag(self, tag):
         if tag == "form":
             self._in_form = False
@@ -73,9 +106,12 @@ class CsfrParser(HTMLParser):
             return
 
 
+CsfrParser = CsrfParser
+
+
 class PypiCleanup:
     def __init__(self, url, username, packages, do_it, patterns, verbose, days, query_only, leave_most_recent_only,
-                 confirm, delete_project, **_):
+                 confirm, delete_project, debug_auth=False, **_):
         self.url = urlparse(url).geturl()
         if self.url[-1] == "/":
             self.url = self.url[:-1]
@@ -88,7 +124,139 @@ class PypiCleanup:
         self.verbose = verbose
         self.query_only = query_only
         self.leave_most_recent_only = leave_most_recent_only
+        self.debug_auth = debug_auth
         self.date = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+
+    def _relative_url(self, url):
+        if url.startswith(self.url):
+            return url[len(self.url):]
+        return url
+
+    def _redact_url(self, url):
+        parsed = urlparse(url)
+        if parsed.query:
+            return parsed._replace(query="<redacted>").geturl()
+        return url
+
+    def _is_login_url(self, url):
+        return self._relative_url(url).startswith("/account/login/")
+
+    def _is_two_factor_url(self, url):
+        return self._relative_url(url).startswith("/account/two-factor/")
+
+    def _is_confirm_login_url(self, url):
+        return self._relative_url(url).startswith("/account/confirm-login/")
+
+    def _is_reauthenticate_url(self, url):
+        return self._relative_url(url).startswith("/account/reauthenticate/")
+
+    def _page_title(self, html):
+        parser = PageTitleParser()
+        parser.feed(html)
+        return parser.title
+
+    def _auth_page_markers(self, html):
+        lower = html.lower()
+        markers = ("unrecognized", "confirm", "email", "login", "two-factor", "reauthenticate")
+        return [marker for marker in markers if marker in lower]
+
+    def _sanitize_html(self, html):
+        html = re.sub(r'(?i)(name="csrf_token"[^>]*value=")[^"]*"', r'\1<redacted>"', html)
+        html = re.sub(r'(?i)(name="totp_value"[^>]*value=")[^"]*"', r'\1<redacted>"', html)
+        html = re.sub(r'(?i)(name="password"[^>]*value=")[^"]*"', r'\1<redacted>"', html)
+        html = re.sub(r'(?i)(token=)[^"&\s<]+', r'\1<redacted>', html)
+        return html
+
+    def _write_auth_snapshot(self, label, response):
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            delete=False,
+            prefix=f"pypi-cleanup-{label}-",
+            suffix=".html",
+        ) as f:
+            f.write(self._sanitize_html(response.text))
+            return f.name
+
+    def _debug_auth_response(self, label, response, snapshot=False):
+        if not self.debug_auth:
+            return
+
+        logging.info(
+            "Auth debug [%s]: status=%s final_url=%s title=%r markers=%s",
+            label,
+            getattr(response, "status_code", "<unknown>"),
+            self._redact_url(getattr(response, "url", "<unknown>")),
+            self._page_title(getattr(response, "text", "")),
+            self._auth_page_markers(getattr(response, "text", "")),
+        )
+        if snapshot:
+            logging.info("Auth debug [%s]: sanitized snapshot=%s", label, self._write_auth_snapshot(label, response))
+
+    def _missing_csrf_message(self, response, form_action, contains_input=None):
+        url = getattr(response, "url", "<unknown>")
+        title = self._page_title(getattr(response, "text", ""))
+        expected = f" form containing {contains_input!r}" if contains_input else " form"
+        message = f"No CSRF token found in expected{expected} for {form_action}; final URL: {self._redact_url(url)}"
+        if title:
+            message = f"{message}; page title: {title!r}"
+
+        if self._is_confirm_login_url(url):
+            message = (
+                f"{message}. PyPI requires email confirmation for this login. "
+                "Confirm the login from the PyPI email and rerun the command, or paste the confirmation URL when prompted."
+            )
+        elif self._is_login_url(url):
+            message = f"{message}. PyPI returned the login page, so authentication did not complete."
+        elif self._is_reauthenticate_url(url):
+            message = f"{message}. PyPI requires password reauthentication before this action."
+
+        return message
+
+    def _csrf_from_response(self, response, form_action, contains_input=None):
+        parser = CsrfParser(form_action, contains_input)
+        parser.feed(response.text)
+        if not parser.csrf:
+            raise ValueError(self._missing_csrf_message(response, form_action, contains_input))
+        return parser.csrf
+
+    def _complete_email_login_confirmation(self, session):
+        logging.warning("PyPI requires email confirmation for this login.")
+        logging.warning("Open the PyPI email and copy the full confirmation URL.")
+        confirmation_url = getpass.getpass(
+            "Paste PyPI login confirmation URL (input hidden, press Enter to abort): "
+        ).strip()
+
+        if not confirmation_url:
+            logging.error("Login confirmation was not provided")
+            return False
+
+        parsed = urlparse(confirmation_url)
+        expected = urlparse(self.url)
+        if (
+            parsed.scheme != expected.scheme
+            or parsed.netloc != expected.netloc
+            or parsed.path != "/account/confirm-login/"
+            or "token=" not in parsed.query
+        ):
+            logging.error("Refusing unexpected PyPI login confirmation URL")
+            return False
+
+        with session.get(confirmation_url, headers={"referer": f"{self.url}/account/confirm-login/"}) as r:
+            r.raise_for_status()
+            if self._is_login_url(r.url) or self._is_confirm_login_url(r.url):
+                logging.error(f"PyPI did not accept the login confirmation URL; final URL: {self._redact_url(r.url)}")
+                return False
+
+        return self._verify_logged_in(session)
+
+    def _verify_logged_in(self, session):
+        with session.get(f"{self.url}/manage/projects/") as r:
+            r.raise_for_status()
+            if self._is_login_url(r.url) or self._is_confirm_login_url(r.url):
+                logging.error(f"PyPI login did not complete; final URL: {self._redact_url(r.url)}")
+                return False
+        return True
 
     def run(self):
         csrf = None
@@ -222,12 +390,9 @@ class PypiCleanup:
 
             with s.get(f"{self.url}/account/login/") as r:
                 r.raise_for_status()
+                self._debug_auth_response("login-get", r)
                 form_action = "/account/login/"
-                parser = CsfrParser(form_action)
-                parser.feed(r.text)
-                if not parser.csrf:
-                    raise ValueError(f"No CSFR found in {form_action}")
-                csrf = parser.csrf
+                csrf = self._csrf_from_response(r, form_action)
 
             two_factor = False
             with s.post(f"{self.url}/account/login/",
@@ -236,17 +401,14 @@ class PypiCleanup:
                               "password": password},
                         headers={"referer": f"{self.url}/account/login/"}) as r:
                 r.raise_for_status()
-                if r.url == f"{self.url}/account/login/":
+                self._debug_auth_response("login-post", r, snapshot=True)
+                if self._is_login_url(r.url):
                     logging.error(f"Login for user {self.username} failed")
                     return 1
 
-                if r.url.startswith(f"{self.url}/account/two-factor/"):
+                if self._is_two_factor_url(r.url):
                     form_action = r.url[len(self.url):]
-                    parser = CsfrParser(form_action)
-                    parser.feed(r.text)
-                    if not parser.csrf:
-                        raise ValueError(f"No CSFR found in {form_action}")
-                    csrf = parser.csrf
+                    csrf = self._csrf_from_response(r, form_action)
                     two_factor = True
                     two_factor_url = r.url
 
@@ -257,9 +419,15 @@ class PypiCleanup:
                                                   "totp_value": auth_code},
                             headers={"referer": two_factor_url}) as r:
                     r.raise_for_status()
+                    self._debug_auth_response("totp-post", r, snapshot=True)
                     if r.url == two_factor_url:
                         logging.error(f"Authentication code {auth_code} is invalid")
                         return 1
+                    if self._is_confirm_login_url(r.url) and not self._complete_email_login_confirmation(s):
+                        return 1
+
+            if not self._verify_logged_in(s):
+                return 1
 
             if self.do_it:
                 logging.warning("!!! WILL ACTUALLY DELETE THINGS - LAST CHANCE TO CHANGE YOUR MIND !!!")
@@ -274,11 +442,7 @@ class PypiCleanup:
                         form_url = f"{self.url}{form_action}"
                         with s.get(form_url) as r:
                             r.raise_for_status()
-                            parser = CsfrParser(form_action, "confirm_delete_version")
-                            parser.feed(r.text)
-                            if not parser.csrf:
-                                raise ValueError(f"No CSFR found in {form_action}")
-                            csrf = parser.csrf
+                            csrf = self._csrf_from_response(r, form_action, "confirm_delete_version")
                             referer = r.url
 
                         with s.post(form_url,
@@ -322,6 +486,8 @@ def main():
                             help="only delete releases **matching specified patterns** where all files are "
                                  "older than X days")
         parser.add_argument("-v", "--verbose", action="store_const", const=1, default=0, help="be verbose")
+        parser.add_argument("--debug-auth", action="store_true", default=False,
+                            help="log PyPI authentication redirects, page titles, markers, and sanitized snapshots")
 
         args = parser.parse_args()
         if args.patterns and not args.confirm and not args.do_it and not args.query_only:
