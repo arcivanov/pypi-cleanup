@@ -34,11 +34,23 @@ Authentication password may be passed via environment variable
 
 Authentication with TOTP is supported.
 
+PyPI may require an additional email confirmation step for TOTP logins from a new or unrecognized device.
+When PyPI redirects to the login confirmation page, `pypi-cleanup` prompts for the confirmation URL from the
+email and follows it with the same authenticated session before continuing. This supports PyPI's newer
+unrecognized-device login verification flow; see PyPI's note on
+[login verification protections](https://blog.pypi.org/posts/2025-11-14-login-verification/) and the related
+`pypi-cleanup` report about missing release-page CSRF tokens in
+[issue #42](https://github.com/arcivanov/pypi-cleanup/issues/42).
+
+If authentication does not complete, `--debug-auth` logs the final URLs, page titles, and high-level page markers
+for the login flow. It also writes sanitized HTML snapshots with CSRF tokens, TOTP values, passwords, and URL tokens
+redacted.
+
 ### Examples:
 
 ```bash
 $ pypi-cleanup --help
-usage: pypi-cleanup [-h] [-u USERNAME] -p PACKAGES [-t URL] [-r PATTERNS | --leave-most-recent-only] [--query-only] [--do-it] [--delete-project] [-y] [-d DAYS] [-v]
+usage: pypi-cleanup [-h] [-u USERNAME] -p PACKAGES [-t URL] [-r PATTERNS | --leave-most-recent-only] [--query-only] [--do-it] [--delete-project] [-y] [-d DAYS] [-v] [--debug-auth]
 
 PyPi Package Cleanup Utility v0.1.8
 
@@ -59,6 +71,7 @@ options:
   -y, --yes             confirm extremely dangerous destructive delete (default: False)
   -d DAYS, --days DAYS  only delete releases **matching specified patterns** where all files are older than X days (default: 0)
   -v, --verbose         be verbose (default: 0)
+  --debug-auth          log PyPI authentication redirects, page titles, markers, and sanitized snapshots (default: False)
 ```
 
 #### Query-Only Mode
@@ -103,6 +116,17 @@ Password:
 Authentication code: 933344
 INFO:root:Would be deleting 'pybuilder' version 0.13.13.dev20240604074936, but not doing it!
 INFO:root:Would be deleting 'pybuilder' version 0.13.14.dev20240814015648, but not doing it!
+```
+
+If PyPI requires email confirmation for the login, the command pauses after TOTP:
+
+```bash
+Password:
+Authentication code: 123456
+WARNING:root:PyPI requires email confirmation for this login.
+WARNING:root:Open the PyPI email and copy the full confirmation URL.
+Paste PyPI login confirmation URL (input hidden, press Enter to abort):
+INFO:root:Would be deleting 'pybuilder' version 0.13.13.dev20240604074936, but not doing it!
 ```
 
 Now to actually delete the specificed packages

@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import sys
+import tempfile
 import time
 from html.parser import HTMLParser
 from textwrap import dedent
@@ -110,7 +111,7 @@ CsfrParser = CsrfParser
 
 class PypiCleanup:
     def __init__(self, url, username, packages, do_it, patterns, verbose, days, query_only, leave_most_recent_only,
-                 confirm, delete_project, **_):
+                 confirm, delete_project, debug_auth=False, **_):
         self.url = urlparse(url).geturl()
         if self.url[-1] == "/":
             self.url = self.url[:-1]
@@ -123,6 +124,7 @@ class PypiCleanup:
         self.verbose = verbose
         self.query_only = query_only
         self.leave_most_recent_only = leave_most_recent_only
+        self.debug_auth = debug_auth
         self.date = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
 
     def _relative_url(self, url):
@@ -152,6 +154,44 @@ class PypiCleanup:
         parser = PageTitleParser()
         parser.feed(html)
         return parser.title
+
+    def _auth_page_markers(self, html):
+        lower = html.lower()
+        markers = ("unrecognized", "confirm", "email", "login", "two-factor", "reauthenticate")
+        return [marker for marker in markers if marker in lower]
+
+    def _sanitize_html(self, html):
+        html = re.sub(r'(?i)(name="csrf_token"[^>]*value=")[^"]*"', r'\1<redacted>"', html)
+        html = re.sub(r'(?i)(name="totp_value"[^>]*value=")[^"]*"', r'\1<redacted>"', html)
+        html = re.sub(r'(?i)(name="password"[^>]*value=")[^"]*"', r'\1<redacted>"', html)
+        html = re.sub(r'(?i)(token=)[^"&\s<]+', r'\1<redacted>', html)
+        return html
+
+    def _write_auth_snapshot(self, label, response):
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            delete=False,
+            prefix=f"pypi-cleanup-{label}-",
+            suffix=".html",
+        ) as f:
+            f.write(self._sanitize_html(response.text))
+            return f.name
+
+    def _debug_auth_response(self, label, response, snapshot=False):
+        if not self.debug_auth:
+            return
+
+        logging.info(
+            "Auth debug [%s]: status=%s final_url=%s title=%r markers=%s",
+            label,
+            getattr(response, "status_code", "<unknown>"),
+            self._redact_url(getattr(response, "url", "<unknown>")),
+            self._page_title(getattr(response, "text", "")),
+            self._auth_page_markers(getattr(response, "text", "")),
+        )
+        if snapshot:
+            logging.info("Auth debug [%s]: sanitized snapshot=%s", label, self._write_auth_snapshot(label, response))
 
     def _missing_csrf_message(self, response, form_action, contains_input=None):
         url = getattr(response, "url", "<unknown>")
@@ -350,6 +390,7 @@ class PypiCleanup:
 
             with s.get(f"{self.url}/account/login/") as r:
                 r.raise_for_status()
+                self._debug_auth_response("login-get", r)
                 form_action = "/account/login/"
                 csrf = self._csrf_from_response(r, form_action)
 
@@ -360,6 +401,7 @@ class PypiCleanup:
                               "password": password},
                         headers={"referer": f"{self.url}/account/login/"}) as r:
                 r.raise_for_status()
+                self._debug_auth_response("login-post", r, snapshot=True)
                 if self._is_login_url(r.url):
                     logging.error(f"Login for user {self.username} failed")
                     return 1
@@ -377,6 +419,7 @@ class PypiCleanup:
                                                   "totp_value": auth_code},
                             headers={"referer": two_factor_url}) as r:
                     r.raise_for_status()
+                    self._debug_auth_response("totp-post", r, snapshot=True)
                     if r.url == two_factor_url:
                         logging.error(f"Authentication code {auth_code} is invalid")
                         return 1
@@ -443,6 +486,8 @@ def main():
                             help="only delete releases **matching specified patterns** where all files are "
                                  "older than X days")
         parser.add_argument("-v", "--verbose", action="store_const", const=1, default=0, help="be verbose")
+        parser.add_argument("--debug-auth", action="store_true", default=False,
+                            help="log PyPI authentication redirects, page titles, markers, and sanitized snapshots")
 
         args = parser.parse_args()
         if args.patterns and not args.confirm and not args.do_it and not args.query_only:
