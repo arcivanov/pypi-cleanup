@@ -19,6 +19,50 @@ from unittest.mock import Mock, patch, MagicMock
 from pypi_cleanup import PypiCleanup
 
 
+class ContextResponse:
+    def __init__(self, url, text=""):
+        self.url = url
+        self.text = text
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def raise_for_status(self):
+        return None
+
+
+class FakeConfirmationSession:
+    def __init__(self):
+        self.urls = []
+
+    def get(self, url, headers=None):
+        self.urls.append((url, headers))
+        if url.startswith("https://pypi.org/account/confirm-login/"):
+            return ContextResponse("https://pypi.org/manage/projects/")
+        if url == "https://pypi.org/manage/projects/":
+            return ContextResponse("https://pypi.org/manage/projects/")
+        raise AssertionError(f"Unexpected URL {url}")
+
+
+def cleanup_for_tests():
+    return PypiCleanup(
+        url="https://pypi.org",
+        username="user",
+        packages=["test-package"],
+        do_it=False,
+        patterns=None,
+        verbose=False,
+        days=0,
+        query_only=False,
+        leave_most_recent_only=False,
+        confirm=False,
+        delete_project=False
+    )
+
+
 class TestEmptyMatchesListRegression(unittest.TestCase):
     """
     Regression test for the bug where max() is called on an empty list when
@@ -80,6 +124,72 @@ class TestEmptyMatchesListRegression(unittest.TestCase):
             if "max() arg is an empty sequence" in str(e):
                 self.fail("max() was called on empty list - bug not fixed!")
             raise
+
+
+class TestCsrfParsing(unittest.TestCase):
+    def test_delete_release_form_csrf_is_found(self):
+        cleanup = cleanup_for_tests()
+        response = ContextResponse(
+            "https://pypi.org/manage/project/test-package/release/1.0.0/",
+            """
+            <form method="POST" action="/manage/project/test-package/release/1.0.0/">
+              <input name="csrf_token" type="hidden" value="csrf-value">
+              <input name="confirm_delete_version" type="text">
+            </form>
+            """,
+        )
+
+        self.assertEqual(
+            cleanup._csrf_from_response(
+                response,
+                "/manage/project/test-package/release/1.0.0/",
+                "confirm_delete_version",
+            ),
+            "csrf-value",
+        )
+
+    def test_missing_delete_form_explains_email_confirmation(self):
+        cleanup = cleanup_for_tests()
+        response = ContextResponse(
+            "https://pypi.org/account/confirm-login/",
+            "<html><head><title>Please confirm this login</title></head></html>",
+        )
+
+        with self.assertRaisesRegex(ValueError, "PyPI requires email confirmation"):
+            cleanup._csrf_from_response(
+                response,
+                "/manage/project/test-package/release/1.0.0/",
+                "confirm_delete_version",
+            )
+
+
+class TestLoginConfirmation(unittest.TestCase):
+    @patch("pypi_cleanup.getpass.getpass")
+    def test_email_confirmation_url_is_followed_in_same_session(self, mock_getpass):
+        cleanup = cleanup_for_tests()
+        session = FakeConfirmationSession()
+        mock_getpass.return_value = "https://pypi.org/account/confirm-login/?token=abc123"
+
+        self.assertTrue(cleanup._complete_email_login_confirmation(session))
+        self.assertEqual(
+            session.urls,
+            [
+                (
+                    "https://pypi.org/account/confirm-login/?token=abc123",
+                    {"referer": "https://pypi.org/account/confirm-login/"},
+                ),
+                ("https://pypi.org/manage/projects/", None),
+            ],
+        )
+
+    @patch("pypi_cleanup.getpass.getpass")
+    def test_unexpected_confirmation_url_is_rejected(self, mock_getpass):
+        cleanup = cleanup_for_tests()
+        session = FakeConfirmationSession()
+        mock_getpass.return_value = "https://example.com/account/confirm-login/?token=abc123"
+
+        self.assertFalse(cleanup._complete_email_login_confirmation(session))
+        self.assertEqual(session.urls, [])
 
 
 if __name__ == '__main__':
