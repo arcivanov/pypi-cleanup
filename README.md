@@ -38,7 +38,7 @@ Authentication with TOTP is supported.
 
 ```bash
 $ pypi-cleanup --help
-usage: pypi-cleanup [-h] [-u USERNAME] -p PACKAGES [-t URL] [-r PATTERNS | --leave-most-recent-only] [--query-only] [--do-it] [--delete-project] [-y] [-d DAYS] [-v]
+usage: pypi-cleanup [-h] [-u USERNAME] -p PACKAGES [-t URL] [-r PATTERNS | --leave-most-recent-only] [--query-only] [--do-it] [--delete-project] [-y] [-d DAYS] [-v] [--debug]
 
 PyPi Package Cleanup Utility v0.1.8
 
@@ -59,6 +59,7 @@ options:
   -y, --yes             confirm extremely dangerous destructive delete (default: False)
   -d DAYS, --days DAYS  only delete releases **matching specified patterns** where all files are older than X days (default: 0)
   -v, --verbose         be verbose (default: 0)
+  --debug               enable debugging (default: 0)
 ```
 
 #### Query-Only Mode
