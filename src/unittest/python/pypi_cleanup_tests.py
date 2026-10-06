@@ -17,7 +17,7 @@
 import os
 import unittest
 from unittest.mock import Mock, patch, MagicMock
-from pypi_cleanup import PypiCleanup, CsfrParser, FlashMessageParser
+from pypi_cleanup import PypiCleanup, CsfrParser, FlashMessageParser, main
 
 
 class TestEmptyMatchesListRegression(unittest.TestCase):
@@ -131,6 +131,14 @@ def release_page(version):
     """
 
 
+def login_page():
+    return f"""
+    <form method="POST" action="/account/login/">
+      <input name="csrf_token" type="hidden" value="{CSRF}">
+      <input name="username" type="text"><input name="password" type="password">
+    </form>"""
+
+
 def flash_messages(errors):
     return "\n".join(f"""
     <div class="notification-bar notification-bar--danger notification-bar--dismissable" role="alert">
@@ -166,9 +174,11 @@ class FakePypi:
     """Simulates Warehouse's release deletion view: the release is only deleted if every acknowledgment
     is checked, otherwise an error is flashed and the user is redirected back to the release page."""
 
-    def __init__(self, deletion_disabled=False, silent_failure=False):
+    def __init__(self, deletion_disabled=False, silent_failure=False, unverified_device=False):
         self.deletion_disabled = deletion_disabled
         self.silent_failure = silent_failure
+        # Login is accepted, but the session is not logged in until the device is confirmed via email
+        self.unverified_device = unverified_device
         self.versions = list(VERSIONS)
         self.flash = []
         self.delete_posts = []
@@ -188,22 +198,22 @@ class FakePypi:
                 "files": [{"filename": f"{PACKAGE.replace('-', '_')}-{v}.tar.gz",
                            "upload-time": "2024-01-01T12:00:00.000000+00:00"} for v in self.versions]})
         if path == "/account/login/":
-            return FakeResponse(url, text=f"""
-                <form method="POST" action="/account/login/">
-                  <input name="csrf_token" type="hidden" value="{CSRF}">
-                  <input name="username" type="text"><input name="password" type="password">
-                </form>""")
+            return FakeResponse(url, text=login_page())
         if path == "/_includes/unauthed/flash-messages/":
             errors, self.flash = self.flash, []
             return FakeResponse(url, text=flash_messages(errors))
         for version in self.versions:
             if path == f"/manage/project/{PACKAGE}/release/{version}/":
+                if self.unverified_device:
+                    return FakeResponse(f"{PYPI_URL}/account/login/?next={path}", text=login_page())
                 return FakeResponse(url, text=release_page(version))
         raise AssertionError(f"Unexpected GET {url}")
 
     def post(self, url, data, **_):
         path = url[len(PYPI_URL):]
         if path == "/account/login/":
+            if self.unverified_device:
+                return FakeResponse(f"{PYPI_URL}/account/confirm-login/")
             return FakeResponse(f"{PYPI_URL}/manage/projects/")
 
         for version in self.versions:
@@ -314,6 +324,29 @@ class TestReleaseDeletion(unittest.TestCase):
 
         self.assertFalse(result)
         self.assertFalse([line for line in logs.output if "Feeding data:" in line])
+
+
+class TestUnverifiedDevice(unittest.TestCase):
+    def test_missing_csrf_after_login_is_reported(self):
+        fake_pypi = FakePypi(unverified_device=True)
+        argv = ["pypi-cleanup", "-t", PYPI_URL, "-u", "user", "-p", PACKAGE, "--do-it"]
+
+        with patch("pypi_cleanup.requests.Session", fake_pypi), \
+                patch("pypi_cleanup.time.sleep"), \
+                patch.dict(os.environ, {"PYPI_CLEANUP_PASSWORD": "password"}), \
+                patch("sys.argv", argv), \
+                self.assertLogs(level="INFO") as logs:
+            result = main()
+
+        self.assertEqual(result, 1)
+        self.assertEqual(fake_pypi.versions, VERSIONS)
+        self.assertEqual(fake_pypi.delete_posts, [])
+        errors = [line for line in logs.output if line.startswith("ERROR:")]
+        self.assertEqual(len(errors), 1)
+        self.assertIn(f"/manage/project/{PACKAGE}/release/1.0.0.dev1/", errors[0])
+        self.assertIn("email verification", errors[0])
+        self.assertIn("same network", errors[0])
+        self.assertIn("https://github.com/arcivanov/pypi-cleanup/issues", errors[0])
 
 
 class TestFlashMessageParser(unittest.TestCase):
