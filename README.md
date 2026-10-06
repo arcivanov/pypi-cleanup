@@ -3,6 +3,7 @@
 [![PyPI Cleanup Version](https://img.shields.io/pypi/v/pypi-cleanup?logo=pypi)](https://pypi.org/project/pypi-cleanup/)
 [![PyPI Cleanup Python Versions](https://img.shields.io/pypi/pyversions/pypi-cleanup?logo=pypi)](https://pypi.org/project/pypi-cleanup/)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/arcivanov/pypi-cleanup/pypi-cleanup.yml?branch=master)](https://github.com/arcivanov/pypi-cleanup/actions/workflows/pypi-cleanup.yml)
+[![Coverage Status](https://img.shields.io/coveralls/github/arcivanov/pypi-cleanup/master?logo=coveralls)](https://coveralls.io/r/arcivanov/pypi-cleanup?branch=master)
 [![PyPI Cleanup Downloads Per Day](https://img.shields.io/pypi/dd/pypi-cleanup?logo=pypi)](https://pypi.org/project/pypi-cleanup/)
 [![PyPI Cleanup Downloads Per Week](https://img.shields.io/pypi/dw/pypi-cleanup?logo=pypi)](https://pypi.org/project/pypi-cleanup/)
 [![PyPI Cleanup Downloads Per Month](https://img.shields.io/pypi/dm/pypi-cleanup?logo=pypi)](https://pypi.org/project/pypi-cleanup/)
@@ -33,6 +34,10 @@ Authentication password may be passed via environment variable
 `PYPI_CLEANUP_PASSWORD`. Otherwise, you will be prompted to enter it.
 
 Authentication with TOTP is supported.
+
+When logging in from a network PyPI has not seen before, PyPI may require the login to be confirmed via
+an email it sends. `pypi-cleanup` will report this and exit; open the verification link from the same
+network and re-run `pypi-cleanup`.
 
 ### Examples:
 

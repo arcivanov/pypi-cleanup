@@ -34,6 +34,13 @@ from requests.exceptions import RequestException
 from pypi_cleanup.__version__ import __version__
 
 DEFAULT_PATTERNS = [re.compile(r".*\.dev\d+$")]
+ISSUES_URL = "https://github.com/arcivanov/pypi-cleanup/issues"
+
+
+class CsrfMissingAfterLogin(ValueError):
+    def __init__(self, form_action):
+        super().__init__(f"No CSFR found in {form_action}")
+        self.form_action = form_action
 
 
 class CsfrParser(HTMLParser):
@@ -323,7 +330,7 @@ class PypiCleanup:
                             parser = CsfrParser(form_action, "confirm_delete_version", debug=self.debug)
                             parser.feed(r.text)
                             if not parser.csrf:
-                                raise ValueError(f"No CSFR found in {form_action}")
+                                raise CsrfMissingAfterLogin(form_action)
                             csrf = parser.csrf
                             acknowledgments = parser.checkboxes
                             referer = r.url
@@ -414,7 +421,19 @@ def main():
             \t"""))
             return 3
 
-        return PypiCleanup(**vars(args)).run()
+        try:
+            return PypiCleanup(**vars(args)).run()
+        except CsrfMissingAfterLogin as e:
+            logging.error(dedent(f"""
+            \tLogin seems to have succeeded, but the CSRF token is missing from {e.form_action}.
+            \tLikely PyPI requires email verification of this device (browser) before it will allow the login.
+            \tPlease check your inbox (including the spam folder) for the verification email and proceed as
+            \tthe email requests. PyPI identifies the device by its network address, so open the verification link
+            \tfrom the same network you're running pypi-cleanup from, then re-run pypi-cleanup.
+            \tIf the email does not arrive, it might be a bug in pypi-cleanup, please submit a report at
+            \t{ISSUES_URL}
+            \t"""))
+            return 1
     finally:
         logging.shutdown()
 
