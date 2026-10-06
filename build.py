@@ -29,7 +29,7 @@ use_plugin("filter_resources")
 
 
 name = "pypi-cleanup"
-version = "0.1.11"
+version = "0.1.12.dev"
 summary = "PyPI Bulk Release Version Cleanup Utility"
 
 authors = [Author("Arcadiy Ivanov", "arcadiy@ivanov.biz")]
