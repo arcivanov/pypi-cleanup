@@ -42,7 +42,7 @@ urls = {"Bug Tracker": "https://github.com/arcivanov/pypi-cleanup/issues",
         "Documentation": "https://github.com/arcivanov/pypi-cleanup"
         }
 
-requires_python = ">=3.9"
+requires_python = ">=3.11"
 
 default_task = ["analyze", "publish"]
 
@@ -75,12 +75,11 @@ def set_properties(project):
         "Programming Language :: Python :: Implementation :: CPython",
         "Programming Language :: Python :: Implementation :: PyPy",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
         "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
         "Operating System :: MacOS :: MacOS X",
         "Operating System :: POSIX :: Linux",
         "Operating System :: Microsoft :: Windows",
